@@ -29,127 +29,132 @@ export const formatCurrency = (value: number) => {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 };
 
-export const fetchSheetData = async (): Promise<DataRow[]> => {
+export const fetchSheetData = async (onChunk?: (data: DataRow[]) => void): Promise<DataRow[]> => {
   try {
     const allData: DataRow[] = [];
 
-    for (const gid of SHEET_GIDS) {
-      try {
-        const response = await fetch(fetchUrl(gid));
-        
-        if (!response.ok) {
-            console.warn(`Falha na requisição para aba ID ${gid}: ${response.status}`);
-            continue;
-        }
-        
-        const csvText = await response.text();
-        
-        // Verificação de segurança: Se a planilha não for pública, o Google retorna HTML de login
-        if (csvText.trim().toLowerCase().startsWith('<!doctype html') || csvText.includes('<html')) {
-             console.error(`Aba ID ${gid} retornou HTML (provavelmente tela de login). Verifique se a planilha está pública ("Qualquer pessoa com o link").`);
-             continue;
-        }
+    // Helper to process raw rows
+    const processRawRows = (rawRows: DataRow[]): DataRow[] => {
+         return rawRows.map(row => {
+            const keys = Object.keys(row);
+            const newRow: DataRow = {};
+            
+            keys.forEach(key => {
+              let val = row[key];
+              const upperKey = key.toUpperCase();
 
-        const result = await new Promise<DataRow[]>((resolve, reject) => {
-          Papa.parse(csvText, {
-            header: true,
-            dynamicTyping: true,
-            skipEmptyLines: 'greedy',
-            complete: (results) => {
-              if (results.errors.length > 0) {
-                  console.warn("Avisos de parse CSV:", results.errors);
+              // --- Regras de Formatação ---
+
+              // 1. CNPJ
+              if (upperKey.includes('CNPJ') && val) {
+                 val = formatCNPJ(String(val));
               }
-              
-              const cleanedData = (results.data as DataRow[]).map(row => {
-                const keys = Object.keys(row);
-                
-                const newRow: DataRow = {};
-                
-                keys.forEach(key => {
-                  let val = row[key];
-                  const upperKey = key.toUpperCase();
 
-                  // --- Regras de Formatação ---
+              // 2. Data
+              if ((upperKey.includes('DATA') || upperKey.includes('INICIO')) && val) {
+                 val = formatDate(String(val));
+                 // Extract Year for trends
+                 const dateObj = new Date(String(row[key]));
+                 if (!isNaN(dateObj.getTime())) {
+                    newRow['_year'] = dateObj.getFullYear();
+                 }
+              }
 
-                  // 1. CNPJ
-                  if (upperKey.includes('CNPJ') && val) {
-                     val = formatCNPJ(String(val));
-                  }
-
-                  // 2. Data
-                  if ((upperKey.includes('DATA') || upperKey.includes('INICIO')) && val) {
-                     val = formatDate(String(val));
-                     // Extract Year for trends
-                     const dateObj = new Date(String(row[key]));
-                     if (!isNaN(dateObj.getTime())) {
-                        newRow['_year'] = dateObj.getFullYear();
-                     }
-                  }
-
-                  // 3. Capital Social (Money)
-                  if (upperKey.includes('CAPITAL') && val !== null && val !== undefined) {
-                      if (typeof val === 'string') {
-                           // Limpa R$, pontos e ajusta vírgula decimal
-                           const cleanStr = val.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
-                           val = parseFloat(cleanStr);
-                      }
-                      
-                      newRow['_raw_capital'] = typeof val === 'number' ? val : 0; 
-                      
-                      if (typeof val === 'number') {
-                          val = formatCurrency(val);
-                      }
-                  }
-
-                  // 4. Sócios (List)
-                  if (upperKey.includes('SOCIOS') || upperKey.includes('QSA')) {
-                      if (typeof val === 'string') {
-                          const socios = val.split(';').map(s => s.trim()).filter(s => s);
-                          newRow['_socios_list'] = socios;
-                          newRow['_socios_count'] = socios.length;
-                          val = socios.join('; '); 
-                      } else {
-                          newRow['_socios_list'] = [];
-                          newRow['_socios_count'] = 0;
-                      }
-                  }
-
-                  // 5. CNAEs / Atividades
-                  // CNAE Principal - Pega "CNAE Primario" ou "Principal"
-                  if ((upperKey.includes('CNAE') || upperKey.includes('ATIVIDADE')) && (upperKey.includes('PRIMARIO') || upperKey.includes('PRIMÁRIO') || upperKey.includes('PRINCIPAL'))) {
-                      newRow['_cnae_principal'] = val;
-                  }
-
-                  // CNAE Secundário - Pega "CNAES Secundarios" e faz split por ";"
-                  if ((upperKey.includes('CNAE') || upperKey.includes('ATIVIDADE')) && (upperKey.includes('SECUNDARI') || upperKey.includes('SECUNDÁRI'))) {
-                      if (typeof val === 'string') {
-                          // Split por ";" conforme solicitado
-                          const cnaes = val.split(';').map(s => s.trim()).filter(s => s.length > 0);
-                          newRow['_cnae_sec_list'] = cnaes;
-                          newRow['_cnae_sec_count'] = cnaes.length;
-                      } else {
-                          newRow['_cnae_sec_list'] = [];
-                          newRow['_cnae_sec_count'] = 0;
-                      }
+              // 3. Capital Social (Money)
+              if (upperKey.includes('CAPITAL') && val !== null && val !== undefined) {
+                  if (typeof val === 'string') {
+                       // Limpa R$, pontos e ajusta vírgula decimal
+                       const cleanStr = val.replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
+                       val = parseFloat(cleanStr);
                   }
                   
-                  // 6. UF extraction (Logic to find state)
-                  if (upperKey === 'UF' || upperKey.includes('ESTADO')) {
-                      newRow['_uf'] = String(val).toUpperCase().trim();
+                  newRow['_raw_capital'] = typeof val === 'number' ? val : 0; 
+                  
+                  if (typeof val === 'number') {
+                      val = formatCurrency(val);
                   }
+              }
 
-                  newRow[key] = val;
-                });
+              // 4. Sócios (List)
+              if (upperKey.includes('SOCIOS') || upperKey.includes('QSA')) {
+                  if (typeof val === 'string') {
+                      const socios = val.split(';').map(s => s.trim()).filter(s => s);
+                      newRow['_socios_list'] = socios;
+                      newRow['_socios_count'] = socios.length;
+                      val = socios.join('; '); 
+                  } else {
+                      newRow['_socios_list'] = [];
+                      newRow['_socios_count'] = 0;
+                  }
+              }
 
-                return newRow;
-              });
-              resolve(cleanedData);
-            },
-            error: (error: Error) => reject(error)
+              // 5. CNAEs / Atividades
+              // CNAE Principal - Pega "CNAE Primario" ou "Principal"
+              if ((upperKey.includes('CNAE') || upperKey.includes('ATIVIDADE')) && (upperKey.includes('PRIMARIO') || upperKey.includes('PRIMÁRIO') || upperKey.includes('PRINCIPAL'))) {
+                  newRow['_cnae_principal'] = val;
+              }
+
+              // CNAE Secundário - Pega "CNAES Secundarios" e faz split por ";"
+              if ((upperKey.includes('CNAE') || upperKey.includes('ATIVIDADE')) && (upperKey.includes('SECUNDARI') || upperKey.includes('SECUNDÁRI'))) {
+                  if (typeof val === 'string') {
+                      // Split por ";" conforme solicitado
+                      const cnaes = val.split(';').map(s => s.trim()).filter(s => s.length > 0);
+                      newRow['_cnae_sec_list'] = cnaes;
+                      newRow['_cnae_sec_count'] = cnaes.length;
+                  } else {
+                      newRow['_cnae_sec_list'] = [];
+                      newRow['_cnae_sec_count'] = 0;
+                  }
+              }
+              
+              // 6. UF extraction (Logic to find state)
+              if (upperKey === 'UF' || upperKey.includes('ESTADO')) {
+                  newRow['_uf'] = String(val).toUpperCase().trim();
+              }
+
+              newRow[key] = val;
+            });
+
+            return newRow;
           });
+    };
+
+    for (const gid of SHEET_GIDS) {
+      try {
+        // Use PapaParse remote download with chunking
+        await new Promise<void>((resolve, reject) => {
+            Papa.parse(fetchUrl(gid), {
+                download: true,
+                header: true,
+                dynamicTyping: true,
+                skipEmptyLines: 'greedy',
+                chunk: (results) => {
+                    if (results.errors.length > 0) {
+                        console.warn("Avisos de parse CSV (Chunk):", results.errors);
+                    }
+                    
+                    const processedRows = processRawRows(results.data as DataRow[]);
+                    
+                    // Add to local accumulator
+                    allData.push(...processedRows);
+                    
+                    // Emit chunk if callback provided
+                    if (onChunk && processedRows.length > 0) {
+                        onChunk(processedRows);
+                    }
+                },
+                complete: () => {
+                    resolve();
+                },
+                error: (err) => {
+                    // Check if it's an HTML error (common with simple fetch, but here Papa handles it differently)
+                    // If parsing failed completely, it might be the HTML login issue.
+                    console.error(`Erro ao processar aba ${gid}:`, err);
+                    reject(err);
+                }
+            });
         });
-        
-        allData.push(...result);
+
       } catch (err) {
           console.error(`Erro ao processar aba ${gid}:`, err);
       }

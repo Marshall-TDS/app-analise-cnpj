@@ -56,9 +56,22 @@ const App: React.FC = () => {
     const loadData = async () => {
       try {
         setLoading(true);
-        const rawData = await fetchSheetData();
-        setData(rawData);
-        setTotalRecords(rawData.length);
+        // Clear previous data if any (though on mount it's likely empty)
+        setData([]); 
+        
+        await fetchSheetData((chunk) => {
+            if (chunk.length === 0) return;
+
+            // Progressive update
+            setData(prevData => {
+                 return [...prevData, ...chunk];
+            });
+            
+            // Update counts and disable loading screen immediately so user can see partial data
+            setTotalRecords(prev => prev + chunk.length);
+            setLoading(false);
+        });
+        
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Ocorreu um erro desconhecido');
       } finally {
