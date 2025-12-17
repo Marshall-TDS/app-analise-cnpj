@@ -116,7 +116,7 @@ export const fetchSheetData = async (onChunk?: (data: DataRow[]) => void): Promi
             });
 
             return newRow;
-          });
+          }).filter(row => (row['_raw_capital'] || 0) > 0);
     };
 
     for (const gid of SHEET_GIDS) {
