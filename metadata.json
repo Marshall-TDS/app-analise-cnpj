@@ -1,0 +1,5 @@
+{
+  "name": "Análise de Serviços Financeiros",
+  "description": "Dashboard completo para visualização, comparação e análise de dados de empresas de serviços financeiros. Explore gráficos interativos, mapas de distribuição geográfica e tabelas detalhadas com filtros avançados por CNAE e Capital Social.",
+  "requestFramePermissions": []
+}
