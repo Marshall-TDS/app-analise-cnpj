@@ -7,6 +7,7 @@ import { fetchSheetData, analyzeColumns } from './services/dataService';
 import { DataRow, ColumnMeta, ViewMode } from './types';
 import { Table, Loader2, AlertCircle, PieChart, BadgeDollarSign, Scale, Star, List, ImageOff } from 'lucide-react';
 
+
 const App: React.FC = () => {
   const [data, setData] = useState<DataRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,25 +53,41 @@ const App: React.FC = () => {
   };
 
   // 2. Load Data
+  const hasLoaded = React.useRef(false); // Guard for StrictMode double-invoke
+
   useEffect(() => {
+    if (hasLoaded.current) return;
+    hasLoaded.current = true;
+
     const loadData = async () => {
       try {
         setLoading(true);
-        // Clear previous data if any (though on mount it's likely empty)
         setData([]); 
         
+        // Accumulator to avoid state thrashing
+        const allDataAccumulator: DataRow[] = [];
+        let lastUpdate = Date.now();
+
         await fetchSheetData((chunk) => {
             if (chunk.length === 0) return;
 
-            // Progressive update
-            setData(prevData => {
-                 return [...prevData, ...chunk];
-            });
+            // Push to local array (fast)
+            allDataAccumulator.push(...chunk);
             
-            // Update counts and disable loading screen immediately so user can see partial data
-            setTotalRecords(prev => prev + chunk.length);
-            setLoading(false);
+            // Throttle UI Counter Update (every 100ms max)
+            const now = Date.now();
+            if (now - lastUpdate > 100) {
+               setTotalRecords(prev => prev + chunk.length); 
+               lastUpdate = now;
+            } else {
+               // If skipped, we can just setTotalRecords at end or lazily, 
+               // but honestly setTotalRecords(accumulator.length) is cheap enough compared to thousands of calls
+            }
         });
+
+        // Final UI Update
+        setData(allDataAccumulator);
+        setTotalRecords(allDataAccumulator.length);
         
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Ocorreu um erro desconhecido');

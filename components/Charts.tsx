@@ -4,7 +4,7 @@ import {
   AreaChart, Area
 } from 'recharts';
 import { DataRow, ColumnMeta } from '../types';
-import { getTopCapital, getTopCNAESecundary, getCapitalTrend, getGeoDistribution } from '../services/dataService';
+import { getTopCapital, getTopCNAESecundary, getCapitalTrend, getGeoDistribution, getTopFinancialCNAEs } from '../services/dataService';
 import { DollarSign, Activity, Map, LineChart as LineChartIcon, Search, Filter, ChevronDown, ChevronUp, X, CheckSquare, Square, Trash2, Loader2 } from 'lucide-react';
 import { BrazilMap } from './BrazilMap';
 import { StateDrilldown } from './StateDrilldown';
@@ -332,6 +332,7 @@ export const Charts: React.FC<ChartsProps> = ({ data, columnsMeta, onBarClick })
   // --- Aggregations ---
   const topCapitalData = useMemo(() => getTopCapital(filteredData), [filteredData]);
   const topCNAEData = useMemo(() => getTopCNAESecundary(filteredData), [filteredData]);
+  const topFinancialCNAEData = useMemo(() => getTopFinancialCNAEs(filteredData), [filteredData]);
   const trendData = useMemo(() => getCapitalTrend(filteredData), [filteredData]);
   const geoData = useMemo(() => getGeoDistribution(filteredData), [filteredData]);
 
@@ -513,7 +514,7 @@ export const Charts: React.FC<ChartsProps> = ({ data, columnsMeta, onBarClick })
                     <Activity className="w-5 h-5 text-[#dbaa3d]" />
                     Top 10 - Serviços
                 </h3>
-                <p className="text-sm text-gray-500 mt-1">Maior número de atividades secundárias</p>
+                <p className="text-sm text-gray-500 mt-1">Empresas com o maior número de serviços</p>
             </div>
           </div>
           
@@ -546,6 +547,50 @@ export const Charts: React.FC<ChartsProps> = ({ data, columnsMeta, onBarClick })
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Row: Top 10 Financial CNAEs (Full Width) */}
+      <div className="w-full h-[500px] lg:h-[600px] bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex flex-col">
+          <div className="flex items-center justify-between mb-2 lg:mb-6">
+             <div>
+                <h3 className="font-bold text-[#222222] flex items-center gap-2 text-lg">
+                    <Activity className="w-5 h-5 text-[#dbaa3d]" />
+                    Top 10 - CNAEs Financeiros Mais Comuns
+                </h3>
+                <p className="text-sm text-gray-500 mt-1">Classificação baseada na frequência de atividades (Principal e Secundárias)</p>
+            </div>
+          </div>
+          
+          <div className="flex-1 min-h-0 w-full overflow-x-auto pb-2">
+            <div className="h-full min-w-[800px] lg:min-w-0">
+                <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                        data={topFinancialCNAEData}
+                        layout="horizontal"
+                        margin={{ top: 5, right: 30, left: 10, bottom: 5 }}
+                    >
+                        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                        <XAxis type="number" tick={{fontSize: 10, fill: '#404040'}} />
+                        <YAxis 
+                            dataKey="name" 
+                            type="category" 
+                            width={280} 
+                            tick={{fontSize: 10, fill: '#404040'}} 
+                            tickFormatter={(val) => val.length > 45 ? val.substring(0, 45) + '...' : val}
+                        />
+                        <Tooltip 
+                            content={<CustomTooltip unit="empresas" />} 
+                            cursor={{fill: '#fcfcfc'}}
+                        />
+                        <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={24}>
+                             {topFinancialCNAEData.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                        </Bar>
+                    </BarChart>
+                </ResponsiveContainer>
+            </div>
+          </div>
       </div>
 
       {/* Row 2: Geographic Map (Full Width) */}

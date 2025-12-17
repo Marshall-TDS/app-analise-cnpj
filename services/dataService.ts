@@ -147,8 +147,6 @@ export const fetchSheetData = async (onChunk?: (data: DataRow[]) => void): Promi
                     resolve();
                 },
                 error: (err) => {
-                    // Check if it's an HTML error (common with simple fetch, but here Papa handles it differently)
-                    // If parsing failed completely, it might be the HTML login issue.
                     console.error(`Erro ao processar aba ${gid}:`, err);
                     reject(err);
                 }
@@ -291,4 +289,44 @@ export const getGeoDistribution = (data: DataRow[]): { name: string, value: numb
         .map(([name, value]) => ({ name, value }))
         .sort((a, b) => b.value - a.value) // Descending
         .slice(0, 27); // Limit to Brazilian states count
+};
+
+export const getTopFinancialCNAEs = (data: DataRow[]): { name: string, value: number, code: string }[] => {
+    const financialCNAEMap = new Map<string, string>();
+    // Pre-fill map with clean code -> description
+    CNAE_LIST.forEach(c => {
+        financialCNAEMap.set(c.code.replace(/\D/g, ''), c.desc);
+    });
+
+    const frequencyMap: Record<string, number> = {};
+
+    data.forEach(row => {
+        const cnaesToCheck: string[] = [];
+        
+        // 1. Primary CNAE
+        if (row['_cnae_principal']) {
+            cnaesToCheck.push(String(row['_cnae_principal']));
+        }
+
+        // 2. Secondary CNAEs
+        if (Array.isArray(row['_cnae_sec_list'])) {
+            cnaesToCheck.push(...(row['_cnae_sec_list'] as string[]));
+        }
+
+        cnaesToCheck.forEach(cnaeCode => {
+            const cleanCode = cnaeCode.replace(/\D/g, '');
+            if (financialCNAEMap.has(cleanCode)) {
+                frequencyMap[cleanCode] = (frequencyMap[cleanCode] || 0) + 1;
+            }
+        });
+    });
+
+    return Object.entries(frequencyMap)
+        .map(([code, value]) => ({
+            name: financialCNAEMap.get(code) || `CNAE ${code}`,
+            value,
+            code
+        }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 10);
 };
