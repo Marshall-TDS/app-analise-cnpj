@@ -203,9 +203,39 @@ export const analyzeColumns = (data: DataRow[]): ColumnMeta[] => {
 };
 
 export const getTopCapital = (data: DataRow[]): { name: string, value: number, fullData: DataRow }[] => {
-    return [...data]
-        .sort((a, b) => (b['_raw_capital'] || 0) - (a['_raw_capital'] || 0))
-        .slice(0, 10)
+    // Deduplicate by CNPJ first
+    const uniqueMap = new Map<string, DataRow>();
+    
+    // Sort by capital first so we keep the "best" version of a duplicate if any (though usually they are identical)
+    // Or just iterate and add if not exists.
+    const sortedRaw = [...data].sort((a, b) => (b['_raw_capital'] || 0) - (a['_raw_capital'] || 0));
+
+    const uniqueData: DataRow[] = [];
+    const seenCNPJs = new Set<string>();
+
+    for (const row of sortedRaw) {
+        // Find CNPJ key
+        const keys = Object.keys(row);
+        const cnpjKey = keys.find(k => k.toUpperCase().includes('CNPJ'));
+        const cnpj = cnpjKey ? String(row[cnpjKey]).replace(/\D/g, '') : null;
+        
+        // If we have a CNPJ, check uniqueness
+        if (cnpj) {
+            if (!seenCNPJs.has(cnpj)) {
+                seenCNPJs.add(cnpj);
+                uniqueData.push(row);
+            }
+        } else {
+             // If no CNPJ found, we might treat it as unique or skip. 
+             // Ideally every company has a CNPJ. If not, maybe use Name?
+             // Let's fallback to Name if no CNPJ, or just include it (risk of dupes but safer than excluding).
+             uniqueData.push(row);
+        }
+        
+        if (uniqueData.length >= 10) break;
+    }
+
+    return uniqueData
         .map(row => {
             const nameKey = Object.keys(row).find(k => 
                 !k.startsWith('_') && (k.toUpperCase().includes('RAZAO') || k.toUpperCase().includes('NOME'))

@@ -3,13 +3,17 @@ import { DataTable } from './components/DataTable';
 import { Charts } from './components/Charts';
 import { ComparisonView } from './components/ComparisonView';
 import { Modal, CompanyDetail } from './components/Modal';
+import { AdvancedFilters } from './components/AdvancedFilters';
+import { ExportTemplate } from './components/ExportTemplate'; // New
 import { fetchSheetData, analyzeColumns } from './services/dataService';
+import { exportToPDF } from './services/exportService'; // New
 import { DataRow, ColumnMeta, ViewMode } from './types';
-import { Table, Loader2, AlertCircle, PieChart, BadgeDollarSign, Scale, Star, List, ImageOff } from 'lucide-react';
+import { Table, Loader2, AlertCircle, PieChart, BadgeDollarSign, Scale, Star, List, ImageOff, Download } from 'lucide-react';
 
 
 const App: React.FC = () => {
   const [data, setData] = useState<DataRow[]>([]);
+  const [filteredData, setFilteredData] = useState<DataRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.TABLE);
@@ -25,6 +29,13 @@ const App: React.FC = () => {
   
   // Statistics
   const [totalRecords, setTotalRecords] = useState(0);
+
+  // Filter State
+  const [activeFilters, setActiveFilters] = useState({
+      cnaes: [] as string[],
+      ufs: [] as string[],
+      naturezas: [] as string[]
+  });
 
   // 1. Hash Navigation Logic
   useEffect(() => {
@@ -87,6 +98,7 @@ const App: React.FC = () => {
 
         // Final UI Update
         setData(allDataAccumulator);
+        setFilteredData(allDataAccumulator);
         setTotalRecords(allDataAccumulator.length);
         
       } catch (err) {
@@ -111,6 +123,52 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // 4. Advanced Filter Logic
+  useEffect(() => {
+      let res = data;
+      const { cnaes, ufs, naturezas } = activeFilters;
+
+      // Unified CNAE Filter
+      if (cnaes.length > 0) {
+          res = res.filter(row => {
+              const p = row['_cnae_principal'] ? String(row['_cnae_principal']) : '';
+              const sList = Array.isArray(row['_cnae_sec_list']) ? row['_cnae_sec_list'] : [];
+              return cnaes.some(code => {
+                  const cleanCode = code.replace(/\D/g, ''); 
+                  const cleanP = p.replace(/\D/g, '');
+                  if (cleanP.includes(cleanCode)) return true;
+                  return sList.some((sec: string) => sec.replace(/\D/g, '').includes(cleanCode));
+              });
+          });
+      }
+
+      // UF Filter
+      if (ufs.length > 0) {
+          res = res.filter(row => {
+               let uf = row['_uf'];
+               if (!uf) {
+                   const ufKey = Object.keys(row).find(k => k.toUpperCase() === 'UF' || k.toUpperCase() === 'ESTADO');
+                   if (ufKey) uf = row[ufKey];
+               }
+               return ufs.includes(uf);
+          });
+      }
+
+      // Natureza Juridica Filter
+      if (naturezas.length > 0) {
+          res = res.filter(row => {
+              const natKey = Object.keys(row).find(k => k.toUpperCase().includes('NATUREZA') || k.toUpperCase().includes('JURIDICA'));
+              if (!natKey) return false;
+              const rowValue = String(row[natKey]).toUpperCase();
+              return naturezas.some(n => {
+                  const code = n.split('-')[0].trim(); 
+                  return rowValue.includes(code);
+              });
+          });
+      }
+      setFilteredData(res);
+  }, [data, activeFilters]);
+
   // Helper: Get ID from row
   const getRowId = (row: DataRow) => {
     const cnpjKey = Object.keys(row).find(k => k.toUpperCase().includes('CNPJ'));
@@ -131,8 +189,15 @@ const App: React.FC = () => {
 
   // 4. Filter Data based on Favorites
   const displayedData = useMemo(() => {
-    if (!showFavoritesOnly) return data;
-    return data.filter(row => favoriteIds.has(getRowId(row)));
+    if (!showFavoritesOnly) return filteredData;
+    return filteredData.filter(row => favoriteIds.has(getRowId(row)));
+  }, [filteredData, showFavoritesOnly, favoriteIds]);
+
+  // Data to feed into AdvancedFilters (to determine available options)
+  // If in favorites mode, we only want options present in our favorites
+  const dataForFilters = useMemo(() => {
+      if (!showFavoritesOnly) return data;
+      return data.filter(row => favoriteIds.has(getRowId(row)));
   }, [data, showFavoritesOnly, favoriteIds]);
 
   const columnsMeta = useMemo<ColumnMeta[]>(() => {
@@ -150,6 +215,33 @@ const App: React.FC = () => {
           handleModeChange(ViewMode.COMPARISON);
       }
   }
+
+  // Export Handler
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleExport = async () => {
+      try {
+          const isFavoritesMode = showFavoritesOnly;
+          const dataToExport = isFavoritesMode ? displayedData : filteredData;
+          
+          if (dataToExport.length === 0) {
+              alert('Não há dados para exportar.');
+              return;
+          }
+
+          setIsExporting(true); 
+          // Small timeout to allow UI to update (show loading spinner in button)
+          setTimeout(async () => {
+             await exportToPDF(dataToExport, isFavoritesMode);
+             setIsExporting(false);
+          }, 100);
+
+      } catch (error) {
+          console.error("Export failed", error);
+          setIsExporting(false);
+          alert("Falha ao exportar PDF.");
+      }
+  };
 
   if (loading) {
     return (
@@ -280,7 +372,18 @@ const App: React.FC = () => {
                   </div>
                 </div>
                 
-                {/* Favorites Toggle - Right aligned on mobile */}
+                <div className="flex items-center gap-2">
+                     <button
+                        onClick={handleExport}
+                        className="flex items-center gap-2 px-3 md:px-4 py-2 bg-[#222222] text-[#dbaa3d] rounded-lg text-sm font-bold shadow-sm hover:bg-black transition-colors whitespace-nowrap"
+                        disabled={isExporting}
+                    >
+                        {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                        <span className="hidden md:inline">{isExporting ? 'Gerando PDF...' : 'Exportar PDF'}</span>
+                    </button>
+                </div>
+
+                    {/* Favorites Toggle - Right aligned on mobile */}
                 <div className="flex items-center flex-shrink-0">
                     <button
                         onClick={() => setShowFavoritesOnly(!showFavoritesOnly)}
@@ -304,8 +407,16 @@ const App: React.FC = () => {
         </div>
 
         {/* View Content */}
-        <div className="flex-1 p-4 md:p-6 overflow-hidden relative">
-            <div className="h-full w-full max-w-[1600px] mx-auto">
+        <div className="flex-1 overflow-hidden relative flex flex-col">
+            <div className="w-full max-w-[1600px] mx-auto w-full">
+              <AdvancedFilters 
+                data={dataForFilters} 
+                onFilterChange={setActiveFilters} 
+                filteredCount={displayedData.length}
+              />
+            </div>
+            
+            <div className="flex-1 w-full max-w-[1600px] mx-auto px-4 md:px-6 pb-6 overflow-hidden">
                 {(viewMode === ViewMode.TABLE || viewMode === ViewMode.LIST) && (
                     <DataTable 
                         data={displayedData} 
@@ -318,6 +429,9 @@ const App: React.FC = () => {
                         isFavoritesFilterActive={showFavoritesOnly}
                     />
                 )}
+                
+                {/* Export Template (Hidden but rendered for capture) */}
+                <ExportTemplate data={displayedData} />
                 
                 {viewMode === ViewMode.CHARTS && (
                     <div className="h-full overflow-y-auto custom-scrollbar pr-2 pb-10">
